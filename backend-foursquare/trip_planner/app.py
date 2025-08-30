@@ -182,8 +182,92 @@ def plan_trip():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Alternative solution if you want to keep google-generativeai==0.3.2
+# Replace the chat_message function in trip_planner/app.py with this version:
+
 @app.route('/chat', methods=['POST'])
-def chat():
+def chat_message():
+    """
+    Handle chat messages from the frontend - Compatible with google-generativeai 0.3.2
+    """
+    data = request.json
+    message = data.get('message', '')
+    conversation_history = data.get('conversation_history', [])
+    trip_id = data.get('trip_id', None)
+    
+    if not message:
+        return jsonify({"error": "No message provided"}), 400
+    
+    # Fetch trip context if trip_id is provided
+    trip_context = ""
+    if trip_id:
+        trip_context = f"This is regarding trip plan {trip_id}."
+    
+    try:
+        # Create system prompt as part of the message instead of separate parameter
+        system_prompt = """
+        You are a travel planning AI assistant for Horizon - an end-to-end journey planner.
+        Your purpose is to help users plan their trips, recommend destinations, and answer travel-related questions.
+        Be friendly, knowledgeable, and helpful. Provide specific, actionable advice rather than generic information.
+        When recommending places, include details about attractions, activities, local cuisine, and practical travel tips.
+        For planning advice, consider factors like budget, timeframe, interests, and practicalities.
+        
+        You can:
+        1. Suggest destinations based on user preferences
+        2. Create detailed travel itineraries
+        3. Provide information about attractions, accommodations, and transportation
+        4. Offer budget planning advice
+        5. Answer travel-related questions about locations worldwide
+        
+        Remember that you're helping real people plan meaningful experiences, so be thoughtful in your recommendations.
+        """
+        
+        # Add context to the current message if available
+        if trip_context:
+            system_prompt += f"\n\nCONTEXT: {trip_context}"
+        
+        # Prepare conversation for Gemini - include system prompt in first message
+        formatted_history = []
+        for msg in conversation_history:
+            role = "user" if msg['role'] == 'user' else "model"
+            formatted_history.append(types.Content(role=role, parts=[types.Part.from_text(msg['content'])]))
+        
+        # Combine system prompt with user message
+        full_message = f"{system_prompt}\n\nUser: {message}"
+        
+        # Generate response using Gemini (v0.3.2 compatible)
+        chat = model.start_chat(history=formatted_history)
+        response = chat.send_message(
+            full_message,
+            generation_config={
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "top_k": 40,
+                "max_output_tokens": 4096,
+            }
+        )
+        
+        response_text = response.text
+        
+        # Check if the response contains any actionable instructions
+        actionable = False
+        action_type = None
+        
+        if "book" in message.lower() or "reserve" in message.lower():
+            actionable = True
+            action_type = "booking"
+        elif "plan" in message.lower() and ("itinerary" in message.lower() or "route" in message.lower()):
+            actionable = True
+            action_type = "planning"
+        
+        return jsonify({
+            "response": response_text,
+            "actionable": actionable,
+            "action_type": action_type
+        }), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     """
     Handle conversational interactions with the AI
     Expected input:
