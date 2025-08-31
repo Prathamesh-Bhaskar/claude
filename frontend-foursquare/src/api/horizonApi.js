@@ -9,7 +9,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000
 async function apiRequest(endpoint, method = 'GET', data = null) {
   const url = `${API_BASE_URL}${endpoint}`;
   
-    const options = {
+  const options = {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -52,6 +52,41 @@ export const tripApi = {
       trip_id: tripId
     });
   },
+  
+  // Get trip plan data by ID
+  getTripById: (tripId) => {
+    return apiRequest(`/trip/${tripId}`, 'GET');
+  },
+  
+  // Update an existing trip plan
+  updateTrip: (tripId, updates) => {
+    return apiRequest(`/trip/${tripId}`, 'PATCH', updates);
+  },
+  
+  // Generate image for a location using Wikipedia or other services
+  getLocationImage: async (locationName) => {
+    try {
+      const response = await apiRequest('/trip/location/image', 'POST', { 
+        location_name: locationName 
+      });
+      return response.image_url;
+    } catch (error) {
+      console.error('Error fetching location image:', error);
+      // Fallback to direct Wikipedia API if backend fails
+      try {
+        const wikiResponse = await fetch(
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(locationName)}`
+        );
+        if (wikiResponse.ok) {
+          const data = await wikiResponse.json();
+          return data.thumbnail?.source || null;
+        }
+      } catch (wikiError) {
+        console.error('Wikipedia fallback failed:', wikiError);
+      }
+      return null;
+    }
+  }
 };
 
 /**
@@ -60,8 +95,17 @@ export const tripApi = {
 export const routeApi = {
   // Optimize a route between multiple locations
   optimizeRoute: (locations, mode = 'car', startLocation = null) => {
+    // Format locations to match expected API format
+    const formattedLocations = locations.map(loc => ({
+      name: loc.name || loc.city || '',
+      lat: loc.lat,
+      lng: loc.lng,
+      description: loc.description || '',
+      day: loc.day || null
+    }));
+    
     return apiRequest('/trip/optimize', 'POST', { 
-      locations, 
+      locations: formattedLocations, 
       mode,
       start_location: startLocation
     });
@@ -73,6 +117,23 @@ export const routeApi = {
       origin,
       destination,
       date
+    });
+  },
+  
+  // Get detailed route between two points with path geometry
+  getRoutePath: (origin, destination, mode = 'car') => {
+    return apiRequest('/route/path', 'POST', {
+      origin,
+      destination,
+      mode
+    });
+  },
+  
+  // Get detailed multi-stop route with waypoints for a complete trip
+  getMultiStopRoute: (waypoints, mode = 'car') => {
+    return apiRequest('/route/multi-stop', 'POST', {
+      waypoints,
+      mode
     });
   }
 };
@@ -96,6 +157,24 @@ export const recommendationApi = {
     return apiRequest('/recommendations/weather', 'POST', {
       location,
       date
+    });
+  },
+  
+  // Get points of interest near a location
+  getNearbyAttractions: (location, radius = 5, categories = [], limit = 10) => {
+    return apiRequest('/recommendations/nearby', 'POST', {
+      location,
+      radius,
+      categories,
+      limit
+    });
+  },
+  
+  // Get top attractions for a destination
+  getTopAttractions: (destination, count = 10) => {
+    return apiRequest('/recommendations/top-attractions', 'POST', {
+      destination,
+      count
     });
   }
 };
@@ -137,6 +216,47 @@ export const bookingApi = {
       guests,
       preferences
     });
+  },
+  
+  // Get hotel details by ID
+  getHotelDetails: (hotelId) => {
+    return apiRequest(`/booking/hotel/${hotelId}`, 'GET');
+  },
+  
+  // Get hotel options for each day of a trip
+  getTripAccommodations: (tripId, preferences = {}) => {
+    return apiRequest('/booking/trip-accommodations', 'POST', {
+      trip_id: tripId,
+      preferences
+    });
+  }
+};
+
+/**
+ * Map API for map-related operations
+ */
+export const mapApi = {
+  // Get geocoding information for a location name
+  geocode: (locationName) => {
+    return apiRequest('/map/geocode', 'POST', { location: locationName });
+  },
+  
+  // Reverse geocode from coordinates to address
+  reverseGeocode: (lat, lng) => {
+    return apiRequest('/map/reverse-geocode', 'POST', { lat, lng });
+  },
+  
+  // Get points of interest for a map view
+  getPOIs: (bounds, filters = {}) => {
+    return apiRequest('/map/pois', 'POST', { 
+      bounds,
+      filters 
+    });
+  },
+  
+  // Get all trip-related locations for map display
+  getTripMapData: (tripId) => {
+    return apiRequest(`/map/trip/${tripId}`, 'GET');
   }
 };
 
@@ -145,5 +265,6 @@ export default {
   trip: tripApi,
   route: routeApi,
   recommendation: recommendationApi,
-  booking: bookingApi
+  booking: bookingApi,
+  map: mapApi
 };

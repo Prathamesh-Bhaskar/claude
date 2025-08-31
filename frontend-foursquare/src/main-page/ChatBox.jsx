@@ -1,12 +1,12 @@
 // src/main-page/ChatBox.jsx
-import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
-import { Mic } from "lucide-react"; 
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { tripApi } from "../api/horizonApi";
+import { processTripResponse } from "../utils/TripProcessor";
+import { Mic, Send, StopCircle } from "lucide-react";
 
-export default function ChatBox({ onPlanGenerated }) {
+const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
   const [messages, setMessages] = useState([
-    { type: "bot", text: "👋 Hi! I am your AI travel assistant. How can I help you today?" }
+    { type: "bot", text: "Hi there! I am your AI travel assistant. How can I help you today?" }
   ]);
   const [input, setInput] = useState("");
   const [listening, setListening] = useState(false);
@@ -14,6 +14,13 @@ export default function ChatBox({ onPlanGenerated }) {
   const [conversationHistory, setConversationHistory] = useState([]);
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // Expose methods to parent component
+  useImperativeHandle(ref, () => ({
+    sendMessage: (message) => {
+      handleSendMessage(message);
+    }
+  }));
 
   // Initialize speech recognition
   useEffect(() => {
@@ -39,18 +46,33 @@ export default function ChatBox({ onPlanGenerated }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Toggle voice listening
+  const toggleListening = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+    } else {
+      recognitionRef.current?.start();
+      setListening(true);
+    }
+  };
+
   // Handle sending a message
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!input.trim()) return;
-    
+    handleSendMessage(input);
+  };
+
+  // Function to handle sending a message (can be called externally)
+  const handleSendMessage = async (message) => {
     // Add user message to chat
-    const userMessage = { type: "user", text: input };
+    const userMessage = { type: "user", text: message };
     setMessages(prev => [...prev, userMessage]);
     
     // Update conversation history for context
     const updatedHistory = [
       ...conversationHistory,
-      { role: "user", content: input }
+      { role: "user", content: message }
     ];
     setConversationHistory(updatedHistory);
     
@@ -60,7 +82,9 @@ export default function ChatBox({ onPlanGenerated }) {
 
     try {
       // Call the backend API
-      const response = await tripApi.sendChatMessage(input, conversationHistory);
+      const response = await tripApi.sendChatMessage(message, conversationHistory, tripContext ? { trip_context: tripContext } : null);
+      
+      console.log("Chat API response:", response);
       
       // Add AI response to chat
       const botMessage = { type: "bot", text: response.response };
@@ -72,20 +96,30 @@ export default function ChatBox({ onPlanGenerated }) {
         { role: "assistant", content: response.response }
       ]);
       
-      // If the response contains a trip plan, pass it to the parent component
+      // Process the response to extract a trip plan
       if (response.actionable && response.action_type === "planning") {
-        // Here we'd make another API call to get the full trip plan
-        const tripPlan = await tripApi.planTrip(input, {
-          // Extract preferences from the conversation or use defaults
-          duration: extractDuration(input) || 3,
-          budget: extractBudget(input) || "medium",
-          interests: extractInterests(input) || ["sightseeing"]
-        });
+        console.log("Planning action detected, processing response");
+        
+        // Process the text response to extract locations and create a trip plan
+        const processedPlan = processTripResponse(response.response);
         
         // Notify parent component about the new trip plan
-        onPlanGenerated && onPlanGenerated(tripPlan);
+        onPlanGenerated && onPlanGenerated(processedPlan);
+      } else {
+        // Even if not marked as actionable, check for trip planning content
+        const hasItinerary = 
+          response.response.includes("itinerary") || 
+          response.response.includes("Day 1") || 
+          (response.response.includes("day") && response.response.includes("trip"));
+        
+        if (hasItinerary) {
+          console.log("Detected potential itinerary in response, processing");
+          const processedPlan = processTripResponse(response.response);
+          onPlanGenerated && onPlanGenerated(processedPlan);
+        }
       }
     } catch (error) {
+      console.error("Error sending chat message:", error);
       // Handle errors
       setMessages(prev => [
         ...prev, 
@@ -96,157 +130,139 @@ export default function ChatBox({ onPlanGenerated }) {
     }
   };
 
-  // Start listening for speech
-  const startListening = () => {
-    if (recognitionRef.current) {
-      setListening(true);
-      recognitionRef.current.start();
-    } else {
-      alert("Your browser does not support voice recognition.");
+  // Extract potential trip preferences from the user's message
+  const extractPreferences = (message) => {
+    // Simple preference extraction
+    const preferences = {
+      duration: extractDuration(message) || 3,
+      budget: extractBudget(message) || "medium",
+      interests: extractInterests(message) || ["sightseeing"]
+    };
+    
+    return preferences;
+  };
+
+  // Extract duration from message
+  const extractDuration = (message) => {
+    const durationMatch = message.match(/(\d+)[ -]day|for (\d+) days/i);
+    return durationMatch ? parseInt(durationMatch[1] || durationMatch[2]) : null;
+  };
+
+  // Extract budget from message
+  const extractBudget = (message) => {
+    const message_lower = message.toLowerCase();
+    if (message_lower.includes("luxury") || message_lower.includes("high-end") || message_lower.includes("expensive")) {
+      return "luxury";
+    } else if (message_lower.includes("budget") || message_lower.includes("cheap") || message_lower.includes("inexpensive")) {
+      return "budget";
     }
-  };
-
-  // Helper functions to extract preferences from user input
-  const extractDuration = (input) => {
-    const durationMatch = input.match(/(\d+)\s*(day|days)/i);
-    return durationMatch ? parseInt(durationMatch[1]) : null;
-  };
-
-  const extractBudget = (input) => {
-    if (input.match(/budget|cheap|affordable|inexpensive/i)) return "low";
-    if (input.match(/luxury|expensive|high-end/i)) return "high";
     return "medium";
   };
 
-  const extractInterests = (input) => {
+  // Extract interests from message
+  const extractInterests = (message) => {
     const interests = [];
-    if (input.match(/history|historical|heritage|monument/i)) interests.push("history");
-    if (input.match(/food|cuisine|restaurant|eating/i)) interests.push("food");
-    if (input.match(/nature|outdoors|hiking|trek/i)) interests.push("nature");
-    if (input.match(/shopping|market|mall/i)) interests.push("shopping");
-    if (input.match(/beach|ocean|sea/i)) interests.push("beaches");
-    if (input.match(/adventure|thrill|exciting/i)) interests.push("adventure");
-    if (input.match(/relax|peaceful|quiet/i)) interests.push("relaxation");
-    return interests.length > 0 ? interests : null;
-  };
-
-  // ✅ Button Styles
-  const micButtonStyle = {
-    padding: "12px",
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    transition: "transform 0.2s, background-color 0.2s",
-    cursor: "pointer",
-    backgroundColor: listening ? "#ef4444" : "#e5e7eb", // red when listening, gray otherwise
-    color: listening ? "white" : "#4b5563",
-  };
-
-  const sendButtonStyle = {
-    marginLeft: "8px",
-    padding: "8px 16px",
-    borderRadius: "9999px",
-    backgroundColor: "#f97316", // orange
-    color: "white",
-    border: "none",
-    cursor: "pointer",
-    transition: "transform 0.2s, background-color 0.2s",
+    const message_lower = message.toLowerCase();
+    
+    const interestKeywords = {
+      "beach": ["beach", "beaches", "coastal", "seaside"],
+      "food": ["food", "culinary", "cuisine", "restaurant", "eat"],
+      "culture": ["culture", "art", "museum", "history", "historical"],
+      "adventure": ["adventure", "hiking", "trekking", "outdoor", "sport"],
+      "shopping": ["shopping", "market", "mall", "shop"],
+      "nature": ["nature", "wildlife", "park", "mountain", "forest"],
+      "nightlife": ["nightlife", "party", "club", "bar", "pub"]
+    };
+    
+    Object.entries(interestKeywords).forEach(([interest, keywords]) => {
+      if (keywords.some(keyword => message_lower.includes(keyword))) {
+        interests.push(interest);
+      }
+    });
+    
+    return interests.length > 0 ? interests : ["sightseeing"];
   };
 
   return (
-    <div className="top-5 left-5 w-full max-w-sm md:max-w-md h-[750px] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50">
-
-      {/* Chat Header */}
-      <div className="bg-orange-500 text-white font-bold px-4 py-3 text-center text-lg md:text-xl">
-        AI Chat Assistant
+    <div className="flex flex-col h-full bg-white rounded-2xl overflow-hidden">
+      {/* Chat header */}
+      <div className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white p-4">
+        <h2 className="font-bold">Travel Assistant</h2>
       </div>
-
-      {/* Chat Messages */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-3">
-        {messages.map((msg, idx) => (
-          <motion.div
-            key={idx}
-            initial={{ opacity: 0, x: msg.type === "user" ? 50 : -50 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3 }}
-            className={`px-4 py-2 rounded-2xl max-w-xs break-words ${
-              msg.type === "user"
-                ? "bg-orange-100 text-orange-800 ml-auto"
-                : "bg-gray-100 text-gray-800"
-            }`}
+      
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((message, index) => (
+          <div
+            key={index}
+            className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
           >
-            {msg.text}
-          </motion.div>
+            <div
+              className={`max-w-[80%] p-3 rounded-lg ${
+                message.type === "user"
+                  ? "bg-indigo-100 text-gray-800"
+                  : "bg-gray-100 text-gray-800"
+              }`}
+            >
+              {message.text}
+            </div>
+          </div>
         ))}
         
         {/* Loading indicator */}
         {isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="bg-gray-100 text-gray-800 px-4 py-2 rounded-2xl max-w-xs flex items-center space-x-2"
-          >
-            <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "600ms" }}></div>
+          <div className="flex justify-start">
+            <div className="bg-gray-100 p-3 rounded-lg">
+              <div className="flex space-x-2">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
+              </div>
             </div>
-            <span>Thinking...</span>
-          </motion.div>
+          </div>
         )}
         
-        {/* Invisible element to scroll to */}
-        <div ref={messagesEndRef} />
+        {/* Auto-scroll anchor */}
+        <div ref={messagesEndRef}></div>
       </div>
-
-      {/* Input Area */}
-      <div className="flex items-center gap-2 p-3 border-t border-gray-200">
-        {/* Voice Button */}
-        <button
-          onClick={startListening}
-          style={micButtonStyle}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = "scale(1.1)";
-            if (!listening) e.currentTarget.style.backgroundColor = "#d1d5db"; // hover gray
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-            if (!listening) e.currentTarget.style.backgroundColor = "#e5e7eb"; // reset gray
-          }}
-          disabled={isLoading}
-        >
-          <Mic size={20} />
-        </button>
-
-        {/* Text Input */}
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-          placeholder="Type your message..."
-          className="flex-1 px-4 py-2 border border-gray-300 rounded-full text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
-          disabled={isLoading}
-        />
-
-        {/* Send Button */}
-        <button
-          onClick={handleSend}
-          style={sendButtonStyle}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "#ea580c"; // darker orange
-            e.currentTarget.style.transform = "scale(1.05)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "#f97316"; // normal orange
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-          disabled={isLoading || !input.trim()}
-        >
-          Send
-        </button>
+      
+      {/* Input area */}
+      <div className="border-t border-gray-200 p-4">
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={toggleListening}
+            className={`p-2 rounded-full focus:outline-none transition-colors ${
+              listening ? "bg-red-500 text-white" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+            }`}
+          >
+            {listening ? <StopCircle size={20} /> : <Mic size={20} />}
+          </button>
+          
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            placeholder="Type your message..."
+            className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            disabled={listening}
+          />
+          
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isLoading}
+            className={`p-2 rounded-full focus:outline-none ${
+              !input.trim() || isLoading
+                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                : "bg-indigo-500 text-white hover:bg-indigo-600"
+            }`}
+          >
+            <Send size={20} />
+          </button>
+        </div>
       </div>
     </div>
   );
-}
+});
+
+export default ChatBox;
