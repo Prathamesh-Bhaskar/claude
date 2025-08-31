@@ -533,7 +533,7 @@ export const bookingApi = {
         preferences
       };
       
-      return await apiRequest('/booking/restaurants', 'POST', requestData);
+      return await apiRequest('/booking/restaurant', 'POST', requestData);
     } catch (error) {
       console.error('Restaurant API error:', error);
       // Return mock data
