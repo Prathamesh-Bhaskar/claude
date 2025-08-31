@@ -19,11 +19,11 @@ CORS(app,
      allow_headers=["Content-Type", "Authorization"],
      supports_credentials=False)
 
-# Service URLs - would be environment variables in production
-TRIP_PLANNER_URL = os.getenv("TRIP_PLANNER_URL", "http://localhost:5001")
-ROUTER_URL = os.getenv("ROUTER_URL", "http://localhost:5002")
-RECOMMENDATION_URL = os.getenv("RECOMMENDATION_URL", "http://localhost:5003")
-BOOKING_URL = os.getenv("BOOKING_URL", "http://localhost:5004")
+# Service URLs - use Render URLs as defaults (override with environment variables if needed)
+TRIP_PLANNER_URL = os.getenv("TRIP_PLANNER_URL", "https://trip-planner-vysn.onrender.com")
+ROUTER_URL = os.getenv("ROUTER_URL", "https://router-xrs1.onrender.com")
+RECOMMENDATION_URL = os.getenv("RECOMMENDATION_URL", "https://recommendation-4raf.onrender.com")
+BOOKING_URL = os.getenv("BOOKING_URL", "https://booking-d95d.onrender.com")
 
 @app.route('/health', methods=['GET'])
 def health_check():
