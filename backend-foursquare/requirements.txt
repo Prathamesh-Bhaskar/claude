@@ -9,4 +9,5 @@ pymongo
 motor
 pydantic
 python-dateutil
-geopy pytest
+geopy
+pytest
