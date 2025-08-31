@@ -1,11 +1,15 @@
-// src/main-page/ChatBox.jsx
+// Enhanced ChatBox.jsx - Unified chat and trip planning
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { tripApi } from "../api/horizonApi";
-import { Mic, Send, StopCircle, MapPin, Calendar, DollarSign } from "lucide-react";
+import { Mic, Send, StopCircle, MapPin, Calendar, DollarSign, Bot, User } from "lucide-react";
 
-const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
+const ChatBox = forwardRef(({ onPlanGenerated, onChatResponse, tripContext = null }, ref) => {
   const [messages, setMessages] = useState([
-    { type: "bot", text: "Hi there! I'm your AI travel assistant. Tell me where you'd like to go, and I'll help you plan the perfect trip!" }
+    { 
+      type: "bot", 
+      text: "Hi there! I'm your AI travel assistant. I can help you with:\n\n🗺️ **Trip Planning** - Tell me where you want to go\n💬 **Travel Questions** - Ask about destinations, activities, etc.\n📋 **Recommendations** - Get suggestions for places to visit\n\nHow can I help you today?",
+      timestamp: new Date().toLocaleTimeString()
+    }
   ]);
   const [input, setInput] = useState("");
   const [listening, setListening] = useState(false);
@@ -17,15 +21,25 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
   // Quick suggestion chips
   const suggestions = [
     "Plan a budget trip to Kerala",
-    "Weekend getaway in Goa",
+    "Weekend getaway in Goa", 
     "Family vacation in Rajasthan",
-    "5-day mountain retreat in Himachal Pradesh"
+    "Best time to visit Himachal Pradesh",
+    "What to eat in Mumbai?",
+    "Adventure activities in Rishikesh"
   ];
 
   // Expose methods to parent component
   useImperativeHandle(ref, () => ({
     sendMessage: (message) => {
       handleSendMessage(message);
+    },
+    clearChat: () => {
+      setMessages([{
+        type: "bot",
+        text: "Chat cleared! How can I help you plan your next trip?",
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+      setConversationHistory([]);
     }
   }));
 
@@ -41,6 +55,10 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
       recognitionRef.current.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
         setInput(transcript);
+        setListening(false);
+      };
+
+      recognitionRef.current.onerror = () => {
         setListening(false);
       };
 
@@ -70,12 +88,18 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
     handleSendMessage(input);
   };
 
+  // Handle suggestion click
+  const handleSuggestionClick = (suggestion) => {
+    setInput(suggestion);
+    handleSendMessage(suggestion);
+  };
+
   // Process and extract trip planning information from a message
   const extractTripInfo = (message) => {
     const preferences = {
       duration: extractDuration(message) || 5,
       budget: extractBudget(message) || 20000,
-      interests: extractInterests(message) || ["nature", "beaches", "relaxation"],
+      interests: extractInterests(message) || ["nature", "culture", "food"],
       dietary: extractDietary(message) || ["vegetarian"],
       transportation: extractTransportation(message) || ["train", "bus"]
     };
@@ -89,26 +113,10 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
     return durationMatch ? parseInt(durationMatch[1] || durationMatch[2]) : null;
   };
 
-  // Extract budget from message
+  // Extract budget from message  
   const extractBudget = (message) => {
-    const budgetMatch = message.match(/budget (?:₹|Rs\.?|INR)?(\d+)[kK]?/i);
-    if (budgetMatch) {
-      let amount = parseInt(budgetMatch[1]);
-      // If it's a small number like "20k", interpret as thousands
-      if (amount < 100 && message.toLowerCase().includes("k")) {
-        amount *= 1000;
-      }
-      return amount;
-    }
-    
-    // Try to detect budget level from keywords
-    const message_lower = message.toLowerCase();
-    if (message_lower.includes("luxury") || message_lower.includes("high-end") || message_lower.includes("expensive")) {
-      return 50000;
-    } else if (message_lower.includes("budget") || message_lower.includes("cheap") || message_lower.includes("inexpensive")) {
-      return 15000;
-    }
-    return 30000; // Default medium budget
+    const budgetMatch = message.match(/budget.*?(\d+)/i);
+    return budgetMatch ? parseInt(budgetMatch[1]) * 1000 : null;
   };
 
   // Extract interests from message
@@ -116,88 +124,64 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
     const interests = [];
     const message_lower = message.toLowerCase();
     
-    const interestKeywords = {
-      "nature": ["nature", "wildlife", "mountains", "hill", "forest", "natural", "outdoors"],
-      "beaches": ["beach", "coastal", "seaside", "ocean", "sea"],
-      "relaxation": ["relax", "peaceful", "calm", "quiet", "retreat", "spa"],
-      "adventure": ["adventure", "hiking", "trekking", "outdoor", "sport", "climbing"],
-      "culture": ["culture", "art", "museum", "history", "historical", "heritage"],
-      "food": ["food", "culinary", "cuisine", "restaurant", "eat", "dining"],
-      "shopping": ["shopping", "market", "mall", "shop", "buy"],
-      "spirituality": ["spiritual", "temple", "church", "mosque", "meditation", "yoga"],
-      "photography": ["photography", "scenic", "views", "instagram", "photo"],
-      "nightlife": ["nightlife", "party", "club", "bar", "pub", "music"]
+    const interestMap = {
+      "nature": ["nature", "hiking", "trekking", "mountains", "forests"],
+      "beaches": ["beach", "sea", "ocean", "swimming", "surfing"],
+      "culture": ["culture", "heritage", "temples", "history", "museums"],
+      "food": ["food", "cuisine", "restaurant", "eating", "local dishes"],
+      "adventure": ["adventure", "sports", "climbing", "rafting"],
+      "relaxation": ["relax", "spa", "peaceful", "quiet", "meditation"]
     };
-    
-    Object.entries(interestKeywords).forEach(([interest, keywords]) => {
+
+    for (const [interest, keywords] of Object.entries(interestMap)) {
       if (keywords.some(keyword => message_lower.includes(keyword))) {
         interests.push(interest);
       }
-    });
-    
-    return interests.length > 0 ? interests : ["nature", "beaches", "relaxation"];
+    }
+
+    return interests.length > 0 ? interests : ["nature", "culture", "food"];
   };
-  
-  // Extract dietary preferences from message
+
+  // Extract dietary preferences
   const extractDietary = (message) => {
-    const dietary = [];
-    const message_lower = message.toLowerCase();
-    
-    if (message_lower.includes("vegetarian") || message_lower.includes("veg ")) {
-      dietary.push("vegetarian");
-    }
-    
-    if (message_lower.includes("vegan")) {
-      dietary.push("vegan");
-    }
-    
-    if (message_lower.includes("non-veg") || message_lower.includes("non veg") || message_lower.includes("meat")) {
-      dietary.push("non-vegetarian");
-    }
-    
-    if (message_lower.includes("halal")) {
-      dietary.push("halal");
-    }
-    
-    if (message_lower.includes("gluten") || message_lower.includes("celiac")) {
-      dietary.push("gluten-free");
-    }
-    
-    return dietary.length > 0 ? dietary : ["vegetarian"];
+    if (message.toLowerCase().includes("veg")) return ["vegetarian"];
+    if (message.toLowerCase().includes("non-veg")) return ["non-vegetarian"];
+    return ["vegetarian"];
   };
   
-  // Extract transportation preferences from message
+  // Extract transportation preferences
   const extractTransportation = (message) => {
     const transportation = [];
     const message_lower = message.toLowerCase();
     
-    if (message_lower.includes("train")) {
-      transportation.push("train");
-    }
-    
-    if (message_lower.includes("bus")) {
-      transportation.push("bus");
-    }
-    
-    if (message_lower.includes("car") || message_lower.includes("drive")) {
-      transportation.push("car");
-    }
-    
-    if (message_lower.includes("flight") || message_lower.includes("fly")) {
-      transportation.push("flight");
-    }
-    
-    if (message_lower.includes("ferry") || message_lower.includes("boat")) {
-      transportation.push("ferry");
-    }
+    if (message_lower.includes("train")) transportation.push("train");
+    if (message_lower.includes("bus")) transportation.push("bus");
+    if (message_lower.includes("car") || message_lower.includes("drive")) transportation.push("car");
+    if (message_lower.includes("flight") || message_lower.includes("fly")) transportation.push("flight");
+    if (message_lower.includes("ferry") || message_lower.includes("boat")) transportation.push("ferry");
     
     return transportation.length > 0 ? transportation : ["train", "bus"];
   };
 
-  // Function to handle sending a message (can be called externally)
+  // Determine if message is a trip planning request
+  const isTripPlanningRequest = (message) => {
+    const planningKeywords = [
+      "plan", "trip", "travel", "visit", "itinerary", "schedule",
+      "go to", "vacation", "holiday", "tour", "journey"
+    ];
+    
+    const message_lower = message.toLowerCase();
+    return planningKeywords.some(keyword => message_lower.includes(keyword));
+  };
+
+  // Function to handle sending a message
   const handleSendMessage = async (message) => {
     // Add user message to chat
-    const userMessage = { type: "user", text: message };
+    const userMessage = { 
+      type: "user", 
+      text: message,
+      timestamp: new Date().toLocaleTimeString()
+    };
     setMessages(prev => [...prev, userMessage]);
     
     // Update conversation history for context
@@ -212,35 +196,38 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
     setIsLoading(true);
 
     try {
-      // Check if the message seems like a trip planning request
-      const isPlanningRequest = 
-        message.toLowerCase().includes("plan") || 
-        message.toLowerCase().includes("trip") || 
-        message.toLowerCase().includes("travel") ||
-        message.toLowerCase().includes("visit");
+      // Check if the message is a trip planning request
+      const isPlanningRequest = isTripPlanningRequest(message);
       
       if (isPlanningRequest) {
+        // Add a typing indicator message
+        const typingMessage = { 
+          type: "bot", 
+          text: "🎯 I'm planning your trip now, this will take a moment...",
+          timestamp: new Date().toLocaleTimeString(),
+          isTyping: true
+        };
+        setMessages(prev => [...prev, typingMessage]);
+        
         // Extract trip preferences
         const preferences = extractTripInfo(message);
-        
-        // Add a typing indicator message
-        setMessages(prev => [
-          ...prev, 
-          { type: "bot", text: "I'm planning your trip now, this will take a moment..." }
-        ]);
         
         // Call the trip planning API directly
         const response = await tripApi.planTrip(message, preferences);
         
-        // Process the response
-        console.log("Trip plan API response:", response);
-        
-        // Add AI response message
+        // Remove typing indicator and add trip plan response
         setMessages(prev => [
-          ...prev.filter(msg => !msg.text.includes("planning your trip now")), // Remove the typing indicator
+          ...prev.filter(msg => !msg.isTyping),
           { 
             type: "bot", 
-            text: `I've created a trip plan for you based on your request! You can see the details below.`,
+            text: `✅ **Trip Plan Generated!** 
+
+I've created a detailed trip plan based on your request. You can see the complete itinerary, map, and details in the center panel.
+
+${response.title ? `**${response.title}**` : ''}
+
+Would you like me to modify anything or do you have other questions about your trip?`,
+            timestamp: new Date().toLocaleTimeString(),
             isPlanResponse: true
           }
         ]);
@@ -250,21 +237,24 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
           ...updatedHistory,
           { 
             role: "assistant", 
-            content: `I've created a trip plan for you based on your request! You can see the details below.`
+            content: "I've created a trip plan for you based on your request!" 
           }
         ]);
         
-        // Pass the response to parent component
+        // Notify parent component with trip plan
         onPlanGenerated && onPlanGenerated(response);
+        
       } else {
         // Regular chat message - send to chat API
         const response = await tripApi.sendChatMessage(message, conversationHistory);
         
         // Add AI response to chat
-        setMessages(prev => [
-          ...prev, 
-          { type: "bot", text: response.response }
-        ]);
+        const botMessage = { 
+          type: "bot", 
+          text: response.response,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setMessages(prev => [...prev, botMessage]);
         
         // Update conversation history
         setConversationHistory([
@@ -272,25 +262,27 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
           { role: "assistant", content: response.response }
         ]);
         
-        // Check if it contains trip planning information anyway
+        // Notify parent component with chat response
+        onChatResponse && onChatResponse(response.response);
+        
+        // Check if response suggests trip planning
         if (response.actionable && response.action_type === "planning") {
-          // Call the trip planning API with the extracted information
-          const preferences = extractTripInfo(message);
-          
-          try {
-            const planResponse = await tripApi.planTrip(message, preferences);
-            onPlanGenerated && onPlanGenerated(planResponse);
-          } catch (planError) {
-            console.error("Error getting trip plan:", planError);
-          }
+          // Could trigger trip planning automatically if needed
+          console.log("AI suggested trip planning action");
         }
       }
     } catch (error) {
       console.error("Error processing message:", error);
-      // Handle errors
+      
+      // Remove any typing indicators and add error message
       setMessages(prev => [
-        ...prev, 
-        { type: "bot", text: "Sorry, I encountered an error. Please try again." }
+        ...prev.filter(msg => !msg.isTyping),
+        { 
+          type: "bot", 
+          text: "❌ Sorry, I encountered an error processing your request. Please try again or rephrase your message.",
+          timestamp: new Date().toLocaleTimeString(),
+          isError: true
+        }
       ]);
     } finally {
       setIsLoading(false);
@@ -298,15 +290,23 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-2xl overflow-hidden">
+    <div className="flex flex-col h-[600px] bg-white rounded-2xl overflow-hidden shadow-lg">
       {/* Chat header */}
-      <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-4 flex items-center justify-between">
+      <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-4 flex items-center justify-between">
         <h2 className="font-bold flex items-center">
-          <MapPin className="mr-2" size={18} />
-          Travel Assistant
+          <Bot className="mr-2" size={18} />
+          AI Travel Assistant
         </h2>
-        <div className="text-xs bg-white bg-opacity-20 px-2 py-1 rounded-full">
-          AI Powered
+        <div className="flex items-center space-x-2">
+          <div className="text-xs bg-white bg-opacity-20 px-2 py-1 rounded-full">
+            Online
+          </div>
+          <button 
+            onClick={() => ref?.current?.clearChat()}
+            className="text-xs bg-white bg-opacity-20 px-2 py-1 rounded-full hover:bg-opacity-30 transition-colors"
+          >
+            Clear Chat
+          </button>
         </div>
       </div>
       
@@ -317,86 +317,117 @@ const ChatBox = forwardRef(({ onPlanGenerated, tripContext = null }, ref) => {
             key={index}
             className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
           >
-            <div
-              className={`max-w-[80%] p-3 rounded-lg ${
-                message.type === "user"
-                  ? "bg-orange-100 text-gray-800"
-                  : "bg-gray-100 text-gray-800"
-              }`}
-            >
-              {message.text}
-              
-              {message.isPlanResponse && (
-                <div className="mt-2 text-xs text-orange-500">
-                  Check out the map and itinerary below!
+            <div className={`flex max-w-[85%] ${message.type === "user" ? "flex-row-reverse" : "flex-row"}`}>
+              {/* Avatar */}
+              <div className={`flex-shrink-0 ${message.type === "user" ? "ml-2" : "mr-2"}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                  message.type === "user" ? "bg-blue-500" : "bg-purple-500"
+                }`}>
+                  {message.type === "user" ? 
+                    <User size={16} className="text-white" /> : 
+                    <Bot size={16} className="text-white" />
+                  }
                 </div>
-              )}
+              </div>
+              
+              {/* Message bubble */}
+              <div className="flex flex-col">
+                <div
+                  className={`p-3 rounded-lg ${
+                    message.type === "user"
+                      ? "bg-blue-500 text-white"
+                      : message.isError
+                      ? "bg-red-50 border border-red-200 text-red-800"
+                      : message.isPlanResponse
+                      ? "bg-green-50 border border-green-200 text-green-800"
+                      : "bg-gray-100 text-gray-800"
+                  }`}
+                >
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                    {message.text}
+                  </div>
+                </div>
+                {/* Timestamp */}
+                <div className={`text-xs text-gray-400 mt-1 ${
+                  message.type === "user" ? "text-right" : "text-left"
+                }`}>
+                  {message.timestamp}
+                </div>
+              </div>
             </div>
           </div>
         ))}
         
-        {/* Quick suggestion chips - show only at the beginning */}
-        {messages.length < 3 && (
-          <div className="flex flex-wrap gap-2 my-4">
-            {suggestions.map((suggestion, index) => (
+        {/* Typing indicator */}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="flex items-center space-x-2 bg-gray-100 p-3 rounded-lg">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+              </div>
+              <span className="text-xs text-gray-500">AI is typing...</span>
+            </div>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+      
+      {/* Suggestions */}
+      {messages.length <= 1 && (
+        <div className="px-4 py-2">
+          <div className="text-xs text-gray-500 mb-2">Try these suggestions:</div>
+          <div className="flex flex-wrap gap-2">
+            {suggestions.slice(0, 3).map((suggestion, index) => (
               <button
                 key={index}
-                onClick={() => handleSendMessage(suggestion)}
-                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-colors"
+                onClick={() => handleSuggestionClick(suggestion)}
+                className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-full transition-colors"
               >
                 {suggestion}
               </button>
             ))}
           </div>
-        )}
-        
-        {/* Loading indicator */}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 p-3 rounded-lg">
-              <div className="flex space-x-2">
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce delay-100"></div>
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce delay-200"></div>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Auto-scroll anchor */}
-        <div ref={messagesEndRef}></div>
-      </div>
+        </div>
+      )}
       
       {/* Input area */}
-      <div className="border-t border-gray-200 p-4">
+      <div className="p-4 border-t border-gray-200">
         <div className="flex items-center space-x-2">
-          <button
-            onClick={toggleListening}
-            className={`p-2 rounded-full focus:outline-none transition-colors ${
-              listening ? "bg-red-500 text-white" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
-            }`}
-          >
-            {listening ? <StopCircle size={20} /> : <Mic size={20} />}
-          </button>
+          <div className="flex-1 relative">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && handleSend()}
+              placeholder="Ask me anything about travel or trip planning..."
+              className="w-full p-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isLoading}
+            />
+          </div>
           
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="Tell me where you want to go..."
-            className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
-            disabled={listening}
-          />
+          {/* Voice input button */}
+          {recognitionRef.current && (
+            <button
+              onClick={toggleListening}
+              disabled={isLoading}
+              className={`p-3 rounded-lg transition-colors ${
+                listening 
+                  ? "bg-red-500 text-white hover:bg-red-600" 
+                  : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+              }`}
+            >
+              {listening ? <StopCircle size={20} /> : <Mic size={20} />}
+            </button>
+          )}
           
+          {/* Send button */}
           <button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
-            className={`p-2 rounded-full focus:outline-none ${
-              !input.trim() || isLoading
-                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                : "bg-orange-500 text-white hover:bg-orange-600"
-            }`}
+            className="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Send size={20} />
           </button>

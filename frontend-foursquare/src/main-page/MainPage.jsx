@@ -1,4 +1,4 @@
-// src/main-page/MainPage.jsx
+// Enhanced MainPage.jsx - Unified response handling
 import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import MapBox from "./MapBox";
@@ -12,27 +12,33 @@ import Navbar from "../components/Navbar";
 
 export default function MainPage() {
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState("chat"); // 'chat' or 'form'
+  const [activeTab, setActiveTab] = useState("chat");
   const [mapLocations, setMapLocations] = useState([]);
   const [tripPlan, setTripPlan] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [responseDisplay, setResponseDisplay] = useState({
+    show: false,
+    content: null,
+    type: 'trip' // 'trip' or 'chat'
+  });
   const [roadmapData, setRoadmapData] = useState({
     title: "Your Trip Plan",
     days: []
   });
   
   const chatBoxRef = useRef(null);
+  const formRef = useRef(null);
 
-  // Handle when a new trip plan is generated
-  const handlePlanGenerated = (response) => {
-    console.log("New trip plan response:", response);
+  // Unified response handler for both chat and form
+  const handlePlanGenerated = (response, source = 'unknown') => {
+    console.log(`New response from ${source}:`, response);
     
     try {
-      // If it's already a structured trip plan with days array
+      setIsLoading(false);
+      
+      // Handle trip planning responses
       if (response && response.days) {
         setTripPlan(response);
-        
-        // Update roadmap data
         updateRoadmapFromPlan(response);
         
         // Extract locations for the map
@@ -43,13 +49,71 @@ export default function MainPage() {
           });
         });
         setMapLocations(allLocations);
+        
+        // Show response on frontend
+        setResponseDisplay({
+          show: true,
+          content: response,
+          type: 'trip',
+          source: source
+        });
       }
-      // If it's some other format, log a warning
+      // Handle regular chat responses
+      else if (response && typeof response === 'string') {
+        setResponseDisplay({
+          show: true,
+          content: response,
+          type: 'chat',
+          source: source
+        });
+      }
+      // Handle other response formats
       else {
-        console.warn("Received response in unknown format:", response);
+        console.log("Processing other response format:", response);
+        setResponseDisplay({
+          show: true,
+          content: response,
+          type: 'general',
+          source: source
+        });
       }
     } catch (error) {
-      console.error("Error processing trip plan:", error);
+      console.error("Error processing response:", error);
+    }
+  };
+
+  // Handle form submission
+  const handleFormSubmit = async (formData) => {
+    setIsLoading(true);
+    
+    try {
+      // Create trip query from form data
+      const query = `Plan a ${formData.duration}-day trip to ${formData.destination} with a budget of ₹${formData.budget}`;
+      
+      // Call trip planning API
+      const response = await tripApi.planTrip(query, {
+        duration: parseInt(formData.duration),
+        budget: parseInt(formData.budget),
+        interests: formData.interests || [],
+        dietary: formData.dietary || [],
+        transportation: formData.transportation || []
+      });
+      
+      handlePlanGenerated(response, 'form');
+      
+    } catch (error) {
+      console.error("Form submission error:", error);
+      setIsLoading(false);
+    }
+  };
+
+  // Handle chat messages (both trip planning and general chat)
+  const handleChatResponse = (response, messageType) => {
+    if (messageType === 'trip_plan') {
+      handlePlanGenerated(response, 'chat');
+    } else {
+      // Just regular chat - let ChatBox handle its own display
+      console.log("Regular chat response handled by ChatBox");
     }
   };
 
@@ -78,10 +142,8 @@ export default function MainPage() {
     const days = searchParams.get("days");
     
     if (destination) {
-      // Set the form tab active if URL parameters are present
       setActiveTab("form");
       
-      // If chat interface is available, send a message to it
       if (days && chatBoxRef.current) {
         const query = `Plan a ${days}-day trip to ${destination}`;
         chatBoxRef.current.sendMessage(query);
@@ -105,7 +167,7 @@ export default function MainPage() {
             <div className="bg-white p-6 rounded-lg shadow-xl">
               <div className="flex items-center space-x-4">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-500"></div>
-                <p className="text-lg font-medium">Planning your trip...</p>
+                <p className="text-lg font-medium">Processing your request...</p>
               </div>
             </div>
           </div>
@@ -142,64 +204,82 @@ export default function MainPage() {
             {/* Planning interfaces */}
             <div className="transition-all duration-300 ease-in-out">
               {activeTab === "chat" ? (
-                <div className="bg-white rounded-lg shadow-md h-[550px]">
-                  <ChatBox 
-                    ref={chatBoxRef}
-                    onPlanGenerated={handlePlanGenerated} 
-                  />
-                </div>
+                <ChatBox 
+                  ref={chatBoxRef}
+                  onPlanGenerated={(response) => handleChatResponse(response, 'trip_plan')}
+                  onChatResponse={(response) => handleChatResponse(response, 'chat')}
+                />
               ) : (
                 <TripPlannerForm 
-                  onPlanGenerated={handlePlanGenerated} 
-                  setIsLoading={setIsLoading}
+                  ref={formRef}
+                  onSubmit={handleFormSubmit}
+                  onPlanGenerated={(response) => handlePlanGenerated(response, 'form')}
                 />
               )}
             </div>
           </div>
           
-          {/* Right column - Map and trip details */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Map */}
-            <div className="bg-white rounded-lg shadow-md p-4">
-              <h2 className="text-xl font-bold mb-4">Trip Map</h2>
-              <div className="h-[500px]">
-                <MapBox 
-                  initialLocations={mapLocations} 
-                  tripPlan={tripPlan} 
-                />
+          {/* Center column - Response Display */}
+          <div className="lg:col-span-1">
+            {responseDisplay.show && (
+              <div className="space-y-6">
+                {/* Response header */}
+                <div className="bg-white rounded-lg shadow-md p-4">
+                  <h3 className="text-lg font-semibold text-gray-800 flex items-center">
+                    <div className={`w-3 h-3 rounded-full mr-2 ${
+                      responseDisplay.source === 'chat' ? 'bg-blue-500' : 'bg-green-500'
+                    }`}></div>
+                    Response from {responseDisplay.source === 'chat' ? 'AI Chat' : 'Form'}
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    {responseDisplay.type === 'trip' ? 'Trip Plan Generated' : 'AI Response'}
+                  </p>
+                </div>
+
+                {/* Response content */}
+                {responseDisplay.type === 'trip' && responseDisplay.content ? (
+                  <div className="space-y-4">
+                    <PlanDetails tripPlan={responseDisplay.content} />
+                    <RoadMap data={roadmapData} />
+                  </div>
+                ) : responseDisplay.type === 'chat' ? (
+                  <div className="bg-white rounded-lg shadow-md p-4">
+                    <div className="prose max-w-none">
+                      <p className="text-gray-700">{responseDisplay.content}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-lg shadow-md p-4">
+                    <pre className="text-sm text-gray-600 whitespace-pre-wrap">
+                      {JSON.stringify(responseDisplay.content, null, 2)}
+                    </pre>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
             
-            {/* Trip details section - show only if we have a trip plan */}
-            {tripPlan && (
-              <>
-                {/* RoadMap */}
-                <div className="bg-white rounded-lg shadow-md p-4">
-                  <h2 className="text-xl font-bold mb-4">Day by Day Itinerary</h2>
-                  <RoadMap 
-                    title={roadmapData.title} 
-                    days={roadmapData.days} 
-                  />
+            {!responseDisplay.show && (
+              <div className="bg-white rounded-lg shadow-md p-8 text-center">
+                <div className="text-gray-400 mb-4">
+                  <svg className="w-16 h-16 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
                 </div>
-                
-                {/* Details */}
-                <div className="bg-white rounded-lg shadow-md p-4">
-                  <h2 className="text-xl font-bold mb-4">Trip Details</h2>
-                  <PlanDetails tripPlan={tripPlan} />
-                </div>
-                
-                {/* Booking */}
-                <div className="bg-white rounded-lg shadow-md p-4">
-                  <h2 className="text-xl font-bold mb-4">Booking Options</h2>
-                  <Booking tripPlan={tripPlan} />
-                </div>
-              </>
+                <h3 className="text-lg font-medium text-gray-700 mb-2">Ready to Plan!</h3>
+                <p className="text-gray-500">Use the chat or form to get started. Your results will appear here.</p>
+              </div>
             )}
           </div>
+          
+          {/* Right column - Map */}
+          <div className="lg:col-span-1">
+            <MapBox locations={mapLocations} />
+            {tripPlan && <Booking tripPlan={tripPlan} />}
+          </div>
         </div>
-        
-        <Footer />
       </div>
+      
+      <Footer />
     </div>
   );
 }
